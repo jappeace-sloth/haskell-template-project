@@ -25,7 +25,9 @@ import GHC.Utils.Error (emptyDiagOpts)
 -- | Errors that can occur during parsing
 data ParseError
   = ParseFailed PState
-  deriving Show
+
+instance Show ParseError where
+  show (ParseFailed _) = "ParseFailed"
 
 -- | Parse a Haskell module from source text.
 --   The filename is used for error messages.
