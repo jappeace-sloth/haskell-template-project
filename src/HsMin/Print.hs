@@ -316,7 +316,7 @@ printExpr opts expr = case expr of
   ExplicitList _ exprs ->
     "[" ++ intercalate "," (map (printExpr opts . unLoc) exprs) ++ "]"
   RecordCon _ con fields ->
-    pn con ++ "{" ++ ppr fields ++ "}"
+    pn con ++ printRecFields opts fields
   ExprWithTySig _ e ty ->
     printExpr opts (unLoc e) ++ "::" ++ printSigType opts (unLoc (hswc_body ty))
   ArithSeq _ _ info -> printArithSeq opts info
@@ -364,18 +364,39 @@ printCaseAlts opts (MG _ (L _ matches)) =
 
 -- | Print do-expression
 printDoExpr :: PrintOpts -> HsDoFlavour -> [ExprLStmt GhcPs] -> String
-printDoExpr opts flavour stmts =
-  keyword ++ braceBlock opts (map (printStmt opts . unLoc) stmts)
+printDoExpr opts flavour stmts = case flavour of
+  ListComp -> printListComp opts stmts
+  MonadComp -> printListComp opts stmts
+  DoExpr Nothing -> "do" ++ braceBlock opts (map (printStmt opts . unLoc) stmts)
+  DoExpr (Just m) -> moduleNameString m ++ ".do" ++ braceBlock opts (map (printStmt opts . unLoc) stmts)
+  MDoExpr Nothing -> "mdo" ++ braceBlock opts (map (printStmt opts . unLoc) stmts)
+  MDoExpr (Just m) -> moduleNameString m ++ ".mdo" ++ braceBlock opts (map (printStmt opts . unLoc) stmts)
+  GhciStmtCtxt -> "do" ++ braceBlock opts (map (printStmt opts . unLoc) stmts)
+
+-- | Print a list comprehension: [body | quals]
+printListComp :: PrintOpts -> [ExprLStmt GhcPs] -> String
+printListComp opts stmts =
+  case splitLast stmts of
+    Nothing -> "[]"
+    Just (quals, lastStmt) ->
+      "[" ++ printStmt opts (unLoc lastStmt)
+      ++ "|" ++ intercalate "," (map (printCompStmt opts . unLoc) quals)
+      ++ "]"
   where
-    keyword :: String
-    keyword = case flavour of
-      DoExpr Nothing     -> "do"
-      DoExpr (Just m)    -> moduleNameString m ++ ".do"
-      MDoExpr Nothing    -> "mdo"
-      MDoExpr (Just m)   -> moduleNameString m ++ ".mdo"
-      ListComp           -> ""
-      MonadComp          -> ""
-      GhciStmtCtxt       -> "do"
+    splitLast :: [a] -> Maybe ([a], a)
+    splitLast [] = Nothing
+    splitLast [x] = Just ([], x)
+    splitLast (x:xs) = case splitLast xs of
+      Nothing -> Nothing
+      Just (rest, l) -> Just (x:rest, l)
+
+-- | Print a comprehension qualifier (bind, body guard)
+printCompStmt :: PrintOpts -> StmtLR GhcPs GhcPs (LHsExpr GhcPs) -> String
+printCompStmt opts stmt = case stmt of
+  BindStmt _ pat body -> printPat opts (unLoc pat) ++ "<-" ++ printExpr opts (unLoc body)
+  BodyStmt _ body _ _ -> printExpr opts (unLoc body)
+  LetStmt _ lbinds -> "let " ++ printLocalBindsInline opts lbinds
+  _ -> ppr stmt
 
 -- | Print a statement
 printStmt :: PrintOpts -> StmtLR GhcPs GhcPs (LHsExpr GhcPs) -> String
@@ -402,6 +423,32 @@ printLocalBindsInline opts lbinds = case lbinds of
 -- | Print let bindings
 printLetBinds :: PrintOpts -> HsLocalBinds GhcPs -> String
 printLetBinds = printLocalBindsInline
+
+-- | Print record fields (for RecordCon expressions)
+printRecFields :: PrintOpts -> HsRecordBinds GhcPs -> String
+printRecFields opts (HsRecFields _ fields dotdot) =
+  "{" ++ intercalate "," (map printField fields ++ dotPart) ++ "}"
+  where
+    printField :: LHsRecField GhcPs (LHsExpr GhcPs) -> String
+    printField (L _ (HsFieldBind _ lbl arg _pun)) =
+      ppr lbl ++ "=" ++ printExpr opts (unLoc arg)
+    dotPart :: [String]
+    dotPart = case dotdot of
+      Nothing -> []
+      Just _ -> [".."]
+
+-- | Print record fields (for constructor patterns)
+printRecPatFields :: PrintOpts -> HsRecFields GhcPs (LPat GhcPs) -> String
+printRecPatFields opts (HsRecFields _ fields dotdot) =
+  "{" ++ intercalate "," (map printField fields ++ dotPart) ++ "}"
+  where
+    printField :: LHsRecField GhcPs (LPat GhcPs) -> String
+    printField (L _ (HsFieldBind _ lbl arg _pun)) =
+      ppr lbl ++ "=" ++ printPat opts (unLoc arg)
+    dotPart :: [String]
+    dotPart = case dotdot of
+      Nothing -> []
+      Just _ -> [".."]
 
 -- | Print a tuple argument
 printTupArg :: PrintOpts -> HsTupArg GhcPs -> String
@@ -479,7 +526,7 @@ printConPatDetails opts con details = case details of
   PrefixCon _tys args ->
     pn (unLoc con) ++ concatMap (\a -> " " ++ printPatPrec opts (unLoc a)) args
   RecCon recFields ->
-    pn (unLoc con) ++ "{" ++ ppr recFields ++ "}"
+    pn (unLoc con) ++ printRecPatFields opts recFields
   InfixCon p1 p2 ->
     printPatPrec opts (unLoc p1) ++ " " ++ pn (unLoc con) ++ " " ++ printPatPrec opts (unLoc p2)
 
@@ -514,8 +561,9 @@ printType opts ty = case ty of
     "{" ++ intercalate "," (map (printConDeclField opts . unLoc) fields) ++ "}"
   HsExplicitListTy _ prom ts ->
     (if isPromotedFlag prom then "'" else "") ++ "[" ++ intercalate "," (map (printType opts . unLoc) ts) ++ "]"
-  HsExplicitTupleTy _ _prom ts ->
-    "'(" ++ intercalate "," (map (printType opts . unLoc) ts) ++ ")"
+  HsExplicitTupleTy _ prom ts ->
+    (if isPromotedFlag prom then "'" else "")
+    ++ "(" ++ intercalate "," (map (printType opts . unLoc) ts) ++ ")"
   HsTyLit _ tlit -> printTyLit tlit
   HsWildCardTy _ -> "_"
   _ -> ppr ty

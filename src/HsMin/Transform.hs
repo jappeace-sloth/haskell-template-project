@@ -4,6 +4,8 @@ module HsMin.Transform
   , defaultMinifyOpts
   ) where
 
+import Data.List (isPrefixOf)
+
 import HsMin.Parse (parseModule, ParseError(..))
 import HsMin.Print (printModule, PrintOpts(..), defaultPrintOpts)
 
@@ -32,4 +34,14 @@ minifySource opts filename src =
       let printOpts = defaultPrintOpts
             { poUseBraces = moUseBraces opts
             }
-      in Right (printModule printOpts modl)
+          pragmas = extractOptionsPragmas src
+      in Right (pragmas ++ printModule printOpts modl)
+
+-- | Extract OPTIONS_GHC pragmas from source (not preserved in AST)
+extractOptionsPragmas :: String -> String
+extractOptionsPragmas src =
+  concatMap (\l -> l ++ "\n") (filter isOptionsPragma (lines src))
+  where
+    isOptionsPragma :: String -> Bool
+    isOptionsPragma line =
+      "{-# OPTIONS_GHC" `isPrefixOf` dropWhile (== ' ') line
