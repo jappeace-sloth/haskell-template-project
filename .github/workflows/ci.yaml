@@ -16,7 +16,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /nix/store
-        key: "${{ runner.os }}-nix-cache"
+        key: "${{ runner.os }}-nix-cache-${{ hashFiles('shell.nix', 'default.nix', 'nix/*.nix') }}"
+        restore-keys: |
+          ${{ runner.os }}-nix-cache-
     - uses: cachix/install-nix-action@v31
       with:
         nix_path: nixpkgs=channel:nixos-unstable
@@ -30,12 +32,6 @@ jobs:
     - run: nix-build
     - run: nix-shell --run "echo OK"
     - run: nix-shell --run "cabal build"
-    - name: Cancel workflow on failure
-      if: failure()
-      continue-on-error: true
-      run: gh run cancel ${{ github.run_id }}
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   cabal:
     runs-on: ${{ matrix.os }}
